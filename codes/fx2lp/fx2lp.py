@@ -16,8 +16,8 @@ BMREQUEST_TYPE_VENDOR_CLASS_WRITE = 0x40
 
 
 class I2C(Bus):
-    VR_WRITE = 0x22
-    VR_READ = 0xa2
+    VR_DOWNLOAD = 0x22
+    VR_UPLOAD = 0xa2
     VR_RENUMERATE = 0xa3
     VR_I2C_SPEED = 0xa4
 
@@ -52,24 +52,33 @@ class I2C(Bus):
                                           bRequest = self.VR_RENUMERATE)
 
 
-    def read_byte(self, i2c_address, reg_address):
+    def read_bytes(self, i2c_address, reg_address, n_bytes):
         if not self.is_virtual_device:
             return self.dev.ctrl_transfer(bmRequestType = BMREQUEST_TYPE_VENDOR_CLASS_READ,
-                                          bRequest = self.VR_READ,
+                                          bRequest = self.VR_UPLOAD,
                                           wValue = i2c_address,
                                           wIndex = reg_address,
-                                          data_or_wLength = 1)[0]
-        return 0
+                                          data_or_wLength = n_bytes)
+        return array('B', [0] * n_bytes)
+
+
+    def read_byte(self, i2c_address, reg_address):
+        return self.read_bytes(i2c_address = i2c_address, reg_address = reg_address, n_bytes = 1)[0]
+
+
+    def write_bytes(self, i2c_address, reg_address, bytes_array):
+        if not self.is_virtual_device:
+            n_bytes = len(bytes_array)
+            bytes_array.insert(0, reg_address)
+            self.dev.ctrl_transfer(bmRequestType = BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+                                   bRequest = self.VR_DOWNLOAD,
+                                   wValue = i2c_address,
+                                   data_or_wLength = bytes_array)
+            return n_bytes
 
 
     def write_byte(self, i2c_address, reg_address, value):
-        if not self.is_virtual_device:
-            return self.dev.ctrl_transfer(bmRequestType = BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
-                                          bRequest = self.VR_WRITE,
-                                          wValue = i2c_address,
-                                          wIndex = reg_address,
-                                          data_or_wLength = array('B', [value]))
+        return self.write_bytes(i2c_address = i2c_address, reg_address = reg_address, bytes_array = array('B', [value]))
 
-#
 # class SPI(AnalogDevicesFX2LP):
 #     pass
