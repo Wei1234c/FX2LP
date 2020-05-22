@@ -6,56 +6,228 @@ import usb
 import usb.backend.libusb0 as libusb0
 import usb.backend.libusb1 as libusb1
 
-# from signal_generators.adf435x.fx2 import AnalogDevicesFX2LP
-from utilities.adapters.peripherals import Bus
+
+_fx2lp_device = None
+
+_BMREQUEST_TYPE_VENDOR_CLASS_READ = 0xC0
+_BMREQUEST_TYPE_VENDOR_CLASS_WRITE = 0x40
 
 
-BMREQUEST_TYPE_VENDOR_CLASS_READ = 0xC0
-BMREQUEST_TYPE_VENDOR_CLASS_WRITE = 0x40
+
+def _get_fx2lp(idVendor = 0X04B4, idProduct = 0X1004, use_libusb0 = True):
+    global _fx2lp_device
+
+    _fx2lp_device = usb.core.find(idVendor = idVendor, idProduct = idProduct,
+                                  backend = libusb0.get_backend() if use_libusb0 else libusb1.get_backend())
+    if _fx2lp_device is not None:
+        _fx2lp_device.set_configuration()
+
+    return _fx2lp_device
 
 
 
-class I2C(Bus):
+def release_fx2lp():
+    global _fx2lp_device
+    _fx2lp_device = None
+
+
+
+class FX2LP:
     VR_RENUMERATE = 0xa3
-    VR_I2C_WRITE = 0x22
-    VR_I2C_READ = 0xa2
+
+
+    def __init__(self, use_libusb0 = True):
+
+        self._bus = self.dev = _get_fx2lp(use_libusb0 = use_libusb0)
+
+        if self.is_virtual_device:
+            print('\n****** Virtual device. Data may not be real ! ******\n')
+
+
+    @property
+    def is_virtual_device(self):
+        return self._bus is None
+
+
+    def re_numerate(self):
+        if not self.is_virtual_device:
+            self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+                                   bRequest = self.VR_RENUMERATE)
+
+
+
+class Pin:
+    IN = 1
+    OUT = 3
+
+    LOW = 0
+    HIGH = 1
+
+
+    def __init__(self, gpio, id, port = 'A', mode = IN, value = None, invert = False):
+
+        self._gpio = gpio
+        self._port = port
+        self._id = id
+        self._mode = mode
+        self._invert = invert
+
+        self._init(mode, value, invert)
+
+
+    def __del__(self):
+        self._gpio = None
+
+
+    def _init(self, mode = None, value = LOW, invert = False):
+        self._invert = invert
+        self.mode(mode)
+        if self.mode() == self.OUT:
+            self.value(value)
+        return self
+
+
+    @property
+    def pin_id(self):
+        return self._id
+
+
+    def value(self, value = None):
+        if value is None:
+            return self._gpio.get_pin_value(pin_idx = self._id, port = self._port)
+        else:
+            self._gpio.set_pin_value(pin_idx = self._id, level = value, port = self._port)
+
+
+    def high(self):
+        self.value(self.HIGH)
+
+
+    def low(self):
+        self.value(self.LOW)
+
+
+    def on(self):
+        self.low() if self._invert else self.high()
+
+
+    def off(self):
+        self.high() if self._invert else self.low()
+
+
+    def toggle(self):
+        self.value(not self.value())
+
+
+    def mode(self, mode = None):
+        if mode is None:
+            return self._mode
+        else:
+            assert mode in (self.IN, self.OUT), 'Only Pin.IN, Pin.OUT supported.'
+            self._mode = mode
+            self._gpio.set_pin_direction(pin_idx = self._id, port = self._port, output = self._mode == self.OUT)
+
+
+
+class GPIO(FX2LP):
+    VR_GPIO = 0x23
+    VR_GPIO_OE = 0x24
+    VR_GPIO_IO = 0x25
+
+    PORTS = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'E': 4}
+
+
+    def _validate(self, port, pin_idx):
+        valids = self.PORTS.keys()
+        assert port in valids, 'valid port: {}'.format(valids)
+
+        valids = list(range(8))
+        assert pin_idx in valids, 'pin_idx port: {}'.format(valids)
+
+
+    def set_IO(self, value, port = 'A', as_direction = False):
+        if not self.is_virtual_device:
+            self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+                                   bRequest = self.VR_GPIO,
+                                   wValue = self.VR_GPIO_OE if as_direction else self.VR_GPIO_IO,
+                                   wIndex = self.PORTS[port],
+                                   data_or_wLength = array('B', [value]))
+
+
+    def get_IO(self, port = 'A', as_direction = False):
+        if not self.is_virtual_device:
+            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_READ,
+                                          bRequest = self.VR_GPIO,
+                                          wValue = self.VR_GPIO_OE if as_direction else self.VR_GPIO_IO,
+                                          wIndex = self.PORTS[port],
+                                          data_or_wLength = 1)[0]
+        return 0
+
+
+    def Pin(self, id, port = 'A', mode = Pin.IN, value = None, invert = False):
+        return Pin(gpio = self, port = port, id = id, mode = mode, value = value, invert = invert)
+
+
+    def set_pin_direction(self, pin_idx, port = 'A', output = False):
+        self._validate(port, pin_idx)
+
+        direction = self.get_IO(port, as_direction = True)
+        clear_mask = ~(1 << pin_idx)
+        value = direction & clear_mask | (int(output) << pin_idx)
+        self.set_IO(value = value, port = port, as_direction = True)
+
+
+    def get_pin_value(self, pin_idx, port = 'A'):
+        self._validate(port, pin_idx)
+
+        value = self.get_IO(port) & (1 << pin_idx)
+        return 1 if value else 0
+
+
+    def set_pin_value(self, pin_idx, level = 0, port = 'A'):
+        self._validate(port, pin_idx)
+
+        level = 1 if level else 0
+        status = self.get_IO(port)
+        clear_mask = ~(1 << pin_idx)
+        value = status & clear_mask | (level << pin_idx)
+        self.set_IO(value = value, port = port)
+
+
+
+class I2C(FX2LP):
+    VR_I2C = 0x22
     VR_I2C_SPEED = 0xa4
 
 
     def __init__(self, as_400KHz = True, use_libusb0 = True):
 
-        self.dev = usb.core.find(idVendor = 0X04B4, idProduct = 0X1004,
-                                 backend = libusb0.get_backend() if use_libusb0 else libusb1.get_backend())
+        super().__init__(use_libusb0 = use_libusb0)
 
-        if self.dev is not None:
-            self.dev.set_configuration()
-
-        super().__init__(self.dev)
-
-        self.set_speed(as_400KHz)
+        self.as_400KHz = as_400KHz
 
 
-    def init(self):
-        pass
-
-
-    def set_speed(self, as_400KHz = True):
+    @property
+    def as_400KHz(self):
         if not self.is_virtual_device:
-            self.dev.ctrl_transfer(bmRequestType = BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+            return bool(self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_READ,
+                                               bRequest = self.VR_I2C_SPEED,
+                                               data_or_wLength = 1)[0])
+        return False
+
+
+    @as_400KHz.setter
+    def as_400KHz(self, value):
+        if not self.is_virtual_device:
+            self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
                                    bRequest = self.VR_I2C_SPEED,
-                                   wValue = int(bool(as_400KHz)))
-
-
-    def re_numerate(self):
-        if not self.is_virtual_device:
-            self.dev.ctrl_transfer(bmRequestType = BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
-                                   bRequest = self.VR_RENUMERATE)
+                                   wValue = bool(value))
 
 
     def read_bytes(self, i2c_address, n_bytes):
         if not self.is_virtual_device:
-            return self.dev.ctrl_transfer(bmRequestType = BMREQUEST_TYPE_VENDOR_CLASS_READ,
-                                          bRequest = self.VR_I2C_READ,
+            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_READ,
+                                          bRequest = self.VR_I2C,
                                           wValue = i2c_address,
                                           data_or_wLength = n_bytes)
         return array('B', [0] * n_bytes)
@@ -67,8 +239,8 @@ class I2C(Bus):
 
     def write_bytes(self, i2c_address, bytes_array):
         if not self.is_virtual_device:
-            self.dev.ctrl_transfer(bmRequestType = BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
-                                   bRequest = self.VR_I2C_WRITE,
+            self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+                                   bRequest = self.VR_I2C,
                                    wValue = i2c_address,
                                    data_or_wLength = bytes_array)
             return len(bytes_array)
@@ -100,6 +272,3 @@ class I2C(Bus):
 
     def write_addressed_byte(self, i2c_address, reg_address, value):
         return self.write_addressed_bytes(i2c_address, reg_address, bytes_array = array('B', [value]))
-
-# class SPI(AnalogDevicesFX2LP):
-#     pass
