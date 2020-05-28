@@ -44,6 +44,14 @@ class FX2LP:
             print('\n****** Virtual device. Data may not be real ! ******\n')
 
 
+    def __enter__(self):
+        return self
+
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._bus = self.dev = None
+
+
     @property
     def is_virtual_device(self):
         return self._bus is None
@@ -81,8 +89,8 @@ class Pin:
 
     def _init(self, mode = None, value = LOW, invert = False):
         self._invert = invert
-        self.mode(mode)
-        if self.mode() == self.OUT:
+        self.mode = mode
+        if self.mode == self.OUT:
             self.value(value)
         return self
 
@@ -119,13 +127,16 @@ class Pin:
         self.value(not self.value())
 
 
-    def mode(self, mode = None):
-        if mode is None:
-            return self._mode
-        else:
-            assert mode in (self.IN, self.OUT), 'Only Pin.IN, Pin.OUT supported.'
-            self._mode = mode
-            self._gpio.set_pin_direction(pin_idx = self._id, port = self._port, output = self._mode == self.OUT)
+    @property
+    def mode(self):
+        return self._mode
+
+
+    @mode.setter
+    def mode(self, mode):
+        assert mode in (self.IN, self.OUT), 'Only Pin.IN, Pin.OUT supported.'
+        self._mode = mode
+        self._gpio.set_pin_direction(pin_idx = self._id, port = self._port, output = self._mode == self.OUT)
 
 
 
@@ -196,7 +207,7 @@ class GPIO(FX2LP):
 
 
 class I2C(FX2LP):
-    VR_I2C = 0x22
+    VR_I2C_IO = 0x22
     VR_I2C_SPEED = 0xa4
 
 
@@ -213,7 +224,6 @@ class I2C(FX2LP):
             return bool(self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_READ,
                                                bRequest = self.VR_I2C_SPEED,
                                                data_or_wLength = 1)[0])
-        return False
 
 
     @as_400KHz.setter
@@ -227,7 +237,7 @@ class I2C(FX2LP):
     def read_bytes(self, i2c_address, n_bytes):
         if not self.is_virtual_device:
             return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_READ,
-                                          bRequest = self.VR_I2C,
+                                          bRequest = self.VR_I2C_IO,
                                           wValue = i2c_address,
                                           data_or_wLength = n_bytes)
         return array('B', [0] * n_bytes)
@@ -239,11 +249,10 @@ class I2C(FX2LP):
 
     def write_bytes(self, i2c_address, bytes_array):
         if not self.is_virtual_device:
-            self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
-                                   bRequest = self.VR_I2C,
-                                   wValue = i2c_address,
-                                   data_or_wLength = bytes_array)
-            return len(bytes_array)
+            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+                                          bRequest = self.VR_I2C_IO,
+                                          wValue = i2c_address,
+                                          data_or_wLength = bytes_array)
 
 
     def write_byte(self, i2c_address, value):
