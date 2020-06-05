@@ -72,7 +72,7 @@ class Pin:
     HIGH = 1
 
 
-    def __init__(self, gpio, id, port = 'A', mode = IN, value = None, invert = False):
+    def __init__(self, gpio, id, port = 'A', mode = IN, value = LOW, invert = False):
 
         self._gpio = gpio
         self._port = port
@@ -91,7 +91,7 @@ class Pin:
         self._invert = invert
         self.mode = mode
         if self.mode == self.OUT:
-            self.value(value)
+            self.value(self.LOW if value is None else value)
         return self
 
 
@@ -264,6 +264,7 @@ class I2C(FX2LP):
             self.write_byte(i2c_address = i2c_address, value = reg_address)
             return self.read_bytes(i2c_address = i2c_address, n_bytes = n_bytes)
 
+        return array('B', [0] * n_bytes)
 
     def read_addressed_byte(self, i2c_address, reg_address):
         return self.read_addressed_bytes(i2c_address, reg_address, 1)[0]
