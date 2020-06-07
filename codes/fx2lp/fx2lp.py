@@ -247,6 +247,18 @@ class I2C(FX2LP):
         return self.read_bytes(i2c_address = i2c_address, n_bytes = 1)[0]
 
 
+    def read_addressed_bytes(self, i2c_address, reg_address, n_bytes):
+        if not self.is_virtual_device:
+            self.write_byte(i2c_address = i2c_address, value = reg_address)
+            return self.read_bytes(i2c_address = i2c_address, n_bytes = n_bytes)
+
+        return array('B', [0] * n_bytes)
+
+
+    def read_addressed_byte(self, i2c_address, reg_address):
+        return self.read_addressed_bytes(i2c_address, reg_address, 1)[0]
+
+
     def write_bytes(self, i2c_address, bytes_array):
         if not self.is_virtual_device:
             return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
@@ -257,17 +269,6 @@ class I2C(FX2LP):
 
     def write_byte(self, i2c_address, value):
         return self.write_bytes(i2c_address = i2c_address, bytes_array = array('B', [value]))
-
-
-    def read_addressed_bytes(self, i2c_address, reg_address, n_bytes):
-        if not self.is_virtual_device:
-            self.write_byte(i2c_address = i2c_address, value = reg_address)
-            return self.read_bytes(i2c_address = i2c_address, n_bytes = n_bytes)
-
-        return array('B', [0] * n_bytes)
-
-    def read_addressed_byte(self, i2c_address, reg_address):
-        return self.read_addressed_bytes(i2c_address, reg_address, 1)[0]
 
 
     def write_addressed_bytes(self, i2c_address, reg_address, bytes_array):
