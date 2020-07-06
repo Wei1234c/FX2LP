@@ -14,6 +14,14 @@ _BMREQUEST_TYPE_VENDOR_CLASS_WRITE = 0x40
 
 
 
+# VR_GPIO = 0x23
+# VR_GPIO_OE = 0x24
+# VR_GPIO_IO = 0x25
+# VR_I2C_IO = 0x22
+# VR_I2C_SPEED = 0xa4
+# VR_SPI_IO = 0x21
+# VR_SPI_SPEED = 0xa5
+
 def _get_fx2lp(idVendor = 0X04B4, idProduct = 0X1004, use_libusb0 = True):
     global _fx2lp_device
 
@@ -283,3 +291,62 @@ class I2C(FX2LP):
 
     def write_addressed_byte(self, i2c_address, reg_address, value):
         return self.write_addressed_bytes(i2c_address, reg_address, bytes_array = array('B', [value]))
+
+
+
+class SPI(FX2LP):
+    VR_SPI_IO = 0x21
+    VR_SPI_SPEED = 0xa5
+
+
+    def __init__(self, speed_Mbps = 10, use_libusb0 = True):
+
+        super().__init__(use_libusb0 = use_libusb0)
+
+        self.speed_Mbps = speed_Mbps
+
+
+    @property
+    def speed_Mbps(self):
+        if not self.is_virtual_device:
+            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_READ,
+                                          bRequest = self.VR_SPI_SPEED,
+                                          data_or_wLength = 1)[0]
+
+
+    @speed_Mbps.setter
+    def speed_Mbps(self, value):
+        if not self.is_virtual_device:
+            self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+                                   bRequest = self.VR_SPI_SPEED,
+                                   wValue = value)
+
+
+    def exchange(self, bytes_array):
+        if not self.is_virtual_device:
+            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+                                          bRequest = self.VR_SPI_IO,
+                                          data_or_wLength = bytes_array)
+
+
+    def read_bytes(self, n_bytes):
+        if not self.is_virtual_device:
+            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_READ,
+                                          bRequest = self.VR_SPI_IO,
+                                          data_or_wLength = n_bytes)
+        return array('B', [0] * n_bytes)
+
+
+    def read_byte(self):
+        return self.read_bytes(n_bytes = 1)[0]
+
+
+    def write_bytes(self, bytes_array):
+        if not self.is_virtual_device:
+            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+                                          bRequest = self.VR_SPI_IO,
+                                          data_or_wLength = bytes_array)
+
+
+    def write_byte(self, value):
+        return self.write_bytes(bytes_array = array('B', [value]))
