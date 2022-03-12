@@ -7,7 +7,7 @@ import usb.backend.libusb0 as libusb0
 import usb.backend.libusb1 as libusb1
 
 
-_fx2lp_device = None
+_fx2lp = None
 
 _BMREQUEST_TYPE_VENDOR_CLASS_READ = 0xC0
 _BMREQUEST_TYPE_VENDOR_CLASS_WRITE = 0x40
@@ -22,21 +22,21 @@ _BMREQUEST_TYPE_VENDOR_CLASS_WRITE = 0x40
 # VR_SPI_IO = 0x21
 # VR_SPI_SPEED = 0xa5
 
-def _get_fx2lp(idVendor = 0X04B4, idProduct = 0X1004, use_libusb0 = True):
-    global _fx2lp_device
+def _get_usb_device(idVendor = 0X04B4, idProduct = 0X1004, use_libusb0 = False):
+    global _fx2lp
 
-    _fx2lp_device = usb.core.find(idVendor = idVendor, idProduct = idProduct,
-                                  backend = libusb0.get_backend() if use_libusb0 else libusb1.get_backend())
-    if _fx2lp_device is not None:
-        _fx2lp_device.set_configuration()
+    _fx2lp = usb.core.find(idVendor = idVendor, idProduct = idProduct,
+                           backend = libusb0.get_backend() if use_libusb0 else libusb1.get_backend())
+    if _fx2lp is not None:
+        _fx2lp.set_configuration()
 
-    return _fx2lp_device
+    return _fx2lp
 
 
 
-def release_fx2lp():
-    global _fx2lp_device
-    _fx2lp_device = None
+def release_usb_device():
+    global _fx2lp
+    _fx2lp = None
 
 
 
@@ -44,9 +44,9 @@ class FX2LP:
     VR_RENUMERATE = 0xa3
 
 
-    def __init__(self, use_libusb0 = True):
+    def __init__(self, use_libusb0 = False):
 
-        self._bus = self.dev = _get_fx2lp(use_libusb0 = use_libusb0)
+        self._bus = self.dev = _get_usb_device(use_libusb0 = use_libusb0)
 
         if self.is_virtual_device:
             print('\n****** Virtual device. Data may not be real ! ******\n')
@@ -57,6 +57,10 @@ class FX2LP:
 
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.__del__()
+
+
+    def __del__(self):
         self._bus = self.dev = None
 
 
@@ -219,12 +223,69 @@ class I2C(FX2LP):
     VR_I2C_SPEED = 0xa4
 
 
-    def __init__(self, as_400KHz = True, use_libusb0 = True):
+    def __init__(self, as_400KHz = True, use_libusb0 = False):
 
         super().__init__(use_libusb0 = use_libusb0)
 
         self.as_400KHz = as_400KHz
 
+
+    # read ==========================================
+
+    def read_bytes(self, i2c_address, n_bytes):
+        if not self.is_virtual_device:
+            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_READ,
+                                          bRequest = self.VR_I2C_IO,
+                                          wValue = i2c_address,
+                                          data_or_wLength = n_bytes)
+        return array('B', [0] * n_bytes)
+
+
+    def read_byte(self, i2c_address):
+        return self.read_bytes(i2c_address = i2c_address, n_bytes = 1)[0]
+
+
+    def read_addressed_bytes(self, i2c_address, sub_address, n_bytes):
+        if not self.is_virtual_device:
+            self.write_byte(i2c_address = i2c_address, value = sub_address)
+            return self.read_bytes(i2c_address = i2c_address, n_bytes = n_bytes)
+
+        return array('B', [0] * n_bytes)
+
+
+    def read_addressed_byte(self, i2c_address, sub_address):
+        return self.read_addressed_bytes(i2c_address, sub_address, 1)[0]
+
+
+    # write ==========================================
+
+    def write_bytes(self, i2c_address, bytes_array):
+        if not self.is_virtual_device:
+            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
+                                          bRequest = self.VR_I2C_IO,
+                                          wValue = i2c_address,
+                                          data_or_wLength = bytes_array)
+
+
+    def write_byte(self, i2c_address, value):
+        return self.write_bytes(i2c_address = i2c_address, bytes_array = array('B', [value]))
+
+
+    def write_addressed_bytes(self, i2c_address, sub_address, bytes_array):
+        n_bytes = len(bytes_array)
+
+        if not self.is_virtual_device:
+            bytes_array.insert(0, sub_address)
+            self.write_bytes(i2c_address = i2c_address, bytes_array = bytes_array)
+
+        return n_bytes
+
+
+    def write_addressed_byte(self, i2c_address, sub_address, value):
+        return self.write_addressed_bytes(i2c_address, sub_address, bytes_array = array('B', [value]))
+
+
+    # speed ==========================================
 
     @property
     def as_400KHz(self):
@@ -242,64 +303,13 @@ class I2C(FX2LP):
                                    wValue = bool(value))
 
 
-    def read_bytes(self, i2c_address, n_bytes):
-        if not self.is_virtual_device:
-            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_READ,
-                                          bRequest = self.VR_I2C_IO,
-                                          wValue = i2c_address,
-                                          data_or_wLength = n_bytes)
-        return array('B', [0] * n_bytes)
-
-
-    def read_byte(self, i2c_address):
-        return self.read_bytes(i2c_address = i2c_address, n_bytes = 1)[0]
-
-
-    def read_addressed_bytes(self, i2c_address, reg_address, n_bytes):
-        if not self.is_virtual_device:
-            self.write_byte(i2c_address = i2c_address, value = reg_address)
-            return self.read_bytes(i2c_address = i2c_address, n_bytes = n_bytes)
-
-        return array('B', [0] * n_bytes)
-
-
-    def read_addressed_byte(self, i2c_address, reg_address):
-        return self.read_addressed_bytes(i2c_address, reg_address, 1)[0]
-
-
-    def write_bytes(self, i2c_address, bytes_array):
-        if not self.is_virtual_device:
-            return self.dev.ctrl_transfer(bmRequestType = _BMREQUEST_TYPE_VENDOR_CLASS_WRITE,
-                                          bRequest = self.VR_I2C_IO,
-                                          wValue = i2c_address,
-                                          data_or_wLength = bytes_array)
-
-
-    def write_byte(self, i2c_address, value):
-        return self.write_bytes(i2c_address = i2c_address, bytes_array = array('B', [value]))
-
-
-    def write_addressed_bytes(self, i2c_address, reg_address, bytes_array):
-        n_bytes = len(bytes_array)
-
-        if not self.is_virtual_device:
-            bytes_array.insert(0, reg_address)
-            self.write_bytes(i2c_address = i2c_address, bytes_array = bytes_array)
-
-        return n_bytes
-
-
-    def write_addressed_byte(self, i2c_address, reg_address, value):
-        return self.write_addressed_bytes(i2c_address, reg_address, bytes_array = array('B', [value]))
-
-
 
 class SPI(FX2LP):
     VR_SPI_IO = 0x21
     VR_SPI_SPEED = 0xa5
 
 
-    def __init__(self, speed_Mbps = 10, use_libusb0 = True):
+    def __init__(self, speed_Mbps = 10, use_libusb0 = False):
 
         super().__init__(use_libusb0 = use_libusb0)
 

@@ -1,7 +1,7 @@
 from fx2lp import *
 
 
-release_fx2lp()
+release_usb_device()
 gpio = GPIO()
 p0 = gpio.Pin(0, mode = Pin.OUT, value = 0)
 p1 = gpio.Pin(1, mode = Pin.OUT, value = 0)
